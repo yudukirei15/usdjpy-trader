@@ -1,116 +1,120 @@
-<!DOCTYPE html><html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>USDJPY Trader</title>
-<style>
-body{margin:0;background:#0b1220;color:#fff;font-family:sans-serif}
-.app{padding:12px;max-width:900px;margin:auto}
-.panel{background:#111c2e;padding:12px;border-radius:12px;margin-bottom:10px}
-input,select,textarea{width:100%;padding:12px;margin-top:6px;background:#0b1220;color:#fff;border:1px solid #2a3b56;border-radius:10px}
-button{padding:12px;border:none;border-radius:10px;background:#5aa9ff;color:#000;font-weight:bold;width:100%}
-img{width:100%;max-height:200px;object-fit:contain;background:#000;margin-top:5px}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-</style>
-</head>
-<body>
-<div class="app"><h2>📖 FX Trade Diary</h2><div class="panel"><input type="date" id="date"><select id="setup">
-<option>M15 bearish → M5 pullback</option>
-<option>M15 bullish → M5 pullback</option>
-<option>レンジ逆張り</option>
-</select><div class="grid">
-<input id="entry" placeholder="Entry">
-<input id="sl" placeholder="SL">
-<input id="tp" placeholder="TP">
-<input id="pnl" placeholder="P&L">
-</div><h4>📸 エントリー前</h4>
-<input type="file" id="before">
-<img id="beforePrev"><h4>📈 エントリー後</h4>
-<input type="file" id="after">
-<img id="afterPrev"><textarea id="reason" placeholder="エントリー理由"></textarea><label><input type="checkbox" class="chk"> M15方向OK</label>
-<label><input type="checkbox" class="chk"> EMA一致</label>
-<label><input type="checkbox" class="chk"> RR>=3</label>
+from pathlib import Path
+import re
 
-<button onclick="save()">保存</button>
+src = Path("/mnt/data/USDJPY_Trade_Diary_PRO.html")
+html = src.read_text(encoding="utf-8")
 
-</div><div class="panel">
-<h3>📊 統計</h3>
-<div id="stats"></div>
-</div><div id="list"></div></div><script>
-let trades=JSON.parse(localStorage.getItem("trades")||"[]");
+# 1) Replace the single multi-image upload area with two distinct areas.
+old = '''<label>チャート画像（複数可）</label><label class="upload"><strong>📸 エントリー前 / エントリー後</strong>タップして画像を選択（複数可）<input id="fimg" type="file" accept="image/*" multiple onchange="preview(event)"></label><div id="preview" class="gallery"></div>'''
+new = '''<label>チャート画像</label>
+<div class="image-split">
+  <div>
+    <label class="upload phase-before"><strong>📸 エントリー前</strong><span>エントリー判断に使ったチャート</span><input id="fimgBefore" type="file" accept="image/*" multiple onchange="previewPhase('before',event)"></label>
+    <div id="previewBefore" class="gallery one"></div>
+  </div>
+  <div>
+    <label class="upload phase-after"><strong>📈 エントリー後</strong><span>結果確認用のチャート</span><input id="fimgAfter" type="file" accept="image/*" multiple onchange="previewPhase('after',event)"></label>
+    <div id="previewAfter" class="gallery one"></div>
+  </div>
+</div>'''
+if old not in html:
+    raise RuntimeError("target upload block not found")
+html = html.replace(old, new)
 
-before.onchange=e=>{
- const f=e.target.files[0];
- const r=new FileReader();
- r.onload=()=>beforePrev.src=r.result;
- if(f)r.readAsDataURL(f);
-};
+# 2) Add styling for the two-phase image blocks.
+css_anchor = ".upload{display:block;text-align:center;border:1px dashed #3a5777;background:#091728;border-radius:13px;padding:12px;color:#aebed1;font-size:11px}"
+css_add = '''.image-split{display:grid;grid-template-columns:1fr;gap:9px}.image-split>div{min-width:0}.upload span{display:block;color:#6f849e;font-size:9px;margin-top:3px}.phase-before{border-color:#3a5777}.phase-after{border-color:#41634f}.gallery.one{grid-template-columns:1fr;margin-top:6px}.gallery.one figure img{height:150px}.image-tag{display:inline-block;font-size:8px;padding:3px 6px;border-radius:99px;background:#132943;border:1px solid #274562;color:#a9c5df;margin-top:4px}'''
+html = html.replace(css_anchor, css_anchor + css_add)
 
-after.onchange=e=>{
- const f=e.target.files[0];
- const r=new FileReader();
- r.onload=()=>afterPrev.src=r.result;
- if(f)r.readAsDataURL(f);
-};
+# 3) Replace image state.
+html = html.replace("let SIDE='SHORT',imgs=[],db;", "let SIDE='SHORT',imgs={before:[],after:[]},db;")
 
-function save(){
- const pnl=Number(pnlInput());
- const result=pnl>0?"WIN":pnl<0?"LOSS":"BE";
+# 4) Replace reset/preview functions.
+html = html.replace(
+"function resetForm(){['fentry','fsl','ftp','frr','fpnl','fm15','fm5','freview','ftags','fmemo'].forEach(id=>$(id).value='');$('fdate').value=today();$('fpair').value='USD/JPY';$('feval').value='⭐ 好きなパターン';$('fresult').value='WIN';side('SHORT');imgs=[];$('preview').innerHTML=''}",
+"function resetForm(){['fentry','fsl','ftp','frr','fpnl','fm15','fm5','freview','ftags','fmemo'].forEach(id=>$(id).value='');$('fdate').value=today();$('fpair').value='USD/JPY';$('feval').value='⭐ 好きなパターン';$('fresult').value='WIN';side('SHORT');imgs={before:[],after:[]};$('previewBefore').innerHTML='';$('previewAfter').innerHTML=''}"
+)
+html = html.replace(
+"function preview(e){imgs=[...e.target.files];$('preview').innerHTML=imgs.map((f,i)=>`<figure><img src=\"${URL.createObjectURL(f)}\"><figcaption>${i+1}. ${esc(f.name)}</figcaption></figure>`).join('')}",
+"""function previewPhase(phase,e){
+  imgs[phase]=[...e.target.files];
+  const target=phase==='before'?'previewBefore':'previewAfter';
+  const label=phase==='before'?'エントリー前':'エントリー後';
+  $(target).innerHTML=imgs[phase].map((f,i)=>`<figure><img src="${URL.createObjectURL(f)}"><figcaption><span class="image-tag">${label}</span> ${i+1}. ${esc(f.name)}</figcaption></figure>`).join('');
+}"""
+)
 
- const checks=[...document.querySelectorAll(".chk")];
- const score=checks.filter(c=>c.checked).length/checks.length;
+# 5) Store image phase in IndexedDB. Replace putImgs.
+old_put = """function putImgs(id,files){return new Promise((ok,no)=>{if(!files.length)return ok();let tx=db.transaction('img','readwrite'),s=tx.objectStore('img');files.forEach((f,i)=>s.put({id:id+'_'+i,tradeId:id,index:i,name:f.name,type:f.type,blob:f}));tx.oncomplete=ok;tx.onerror=()=>no(tx.error)})}"""
+new_put = """function putImgs(id,files){
+  return new Promise((ok,no)=>{
+    const all=[...(files.before||[]).map((f,i)=>({f,phase:'before',index:i})),...(files.after||[]).map((f,i)=>({f,phase:'after',index:i}))];
+    if(!all.length)return ok();
+    let tx=db.transaction('img','readwrite'),s=tx.objectStore('img');
+    all.forEach((x,i)=>s.put({id:id+'_'+x.phase+'_'+x.index,tradeId:id,index:x.index,phase:x.phase,name:x.f.name,type:x.f.type,blob:x.f}));
+    tx.oncomplete=ok;tx.onerror=()=>no(tx.error)
+  })
+}"""
+if old_put not in html:
+    raise RuntimeError("putImgs target not found")
+html = html.replace(old_put, new_put)
 
- const t={
-  id:Date.now(),
-  date:date.value,
-  setup:setup.value,
-  entry:entry.value,
-  sl:sl.value,
-  tp:tp.value,
-  pnl:pnl,
-  result:result,
-  checkScore:score,
-  before:beforePrev.src,
-  after:afterPrev.src,
-  reason:reason.value
- };
+# 6) Save call remains same variable name but now object.
+html = html.replace("await putImgs(id,imgs)", "await putImgs(id,imgs)")
 
- trades.push(t);
- localStorage.setItem("trades",JSON.stringify(trades));
- render();
-}
+# 7) Make getImgs phase-aware and gallery display grouped.
+old_gallery = """async function gallery(){let h='';for(let t of D.trades){for(let x of await getImgs(t.id))h+=`<figure><img src="${URL.createObjectURL(x.blob)}"><figcaption>${esc(t.date)} ${esc(t.side)}</figcaption></figure>`}$('gallery').innerHTML=h||'<div class="empty" style="grid-column:1/-1">保存したチャート画像がここに並びます。</div>'}"""
+new_gallery = """async function gallery(){
+  let h='';
+  for(let t of D.trades){
+    const im=await getImgs(t.id);
+    if(!im.length)continue;
+    const before=im.filter(x=>x.phase==='before'), after=im.filter(x=>x.phase==='after'), legacy=im.filter(x=>!x.phase);
+    h+=`<div style="grid-column:1/-1;margin-top:6px"><div class="trtitle">${esc(t.date)} · ${esc(t.side)}</div><div class="sub">${esc(t.evaluation)}</div></div>`;
+    if(before.length)h+=`<div style="grid-column:1/-1"><div class="image-tag">📸 エントリー前</div></div>${before.map(x=>`<figure><img src="${URL.createObjectURL(x.blob)}"><figcaption>エントリー前</figcaption></figure>`).join('')}`;
+    if(after.length)h+=`<div style="grid-column:1/-1"><div class="image-tag">📈 エントリー後</div></div>${after.map(x=>`<figure><img src="${URL.createObjectURL(x.blob)}"><figcaption>エントリー後</figcaption></figure>`).join('')}`;
+    if(legacy.length)h+=legacy.map(x=>`<figure><img src="${URL.createObjectURL(x.blob)}"><figcaption>チャート</figcaption></figure>`).join('');
+  }
+  $('gallery').innerHTML=h||'<div class="empty" style="grid-column:1/-1">保存したチャート画像がここに並びます。</div>'
+}"""
+if old_gallery not in html:
+    raise RuntimeError("gallery target not found")
+html = html.replace(old_gallery, new_gallery)
 
-function pnlInput(){return document.getElementById("pnl").value||0;}
+# 8) Detail view: split before/after labels.
+old_detail = """async function detail(id){let t=D.trades.find(x=>x.id===id);if(!t)return;let im=await getImgs(id);let h=card(t);if(im.length)h+=`<div class="gallery">${im.map(x=>`<figure><img src="${URL.createObjectURL(x.blob)}"><figcaption>${esc(x.name)}</figcaption></figure>`).join('')}</div>`;let w=window.open('','_blank');if(!w)return;w.document.write(`<body style="background:#07101f;color:#fff;font-family:system-ui;max-width:720px;margin:auto;padding:16px"><h2>FX Trade Diary</h2>${h}</body>`);w.document.close()}"""
+new_detail = """async function detail(id){
+  let t=D.trades.find(x=>x.id===id);if(!t)return;
+  let im=await getImgs(id),h=card(t),before=im.filter(x=>x.phase==='before'),after=im.filter(x=>x.phase==='after'),legacy=im.filter(x=>!x.phase);
+  if(before.length)h+=`<h3>📸 エントリー前</h3><div class="gallery">${before.map(x=>`<figure><img src="${URL.createObjectURL(x.blob)}"><figcaption>${esc(x.name)}</figcaption></figure>`).join('')}</div>`;
+  if(after.length)h+=`<h3>📈 エントリー後</h3><div class="gallery">${after.map(x=>`<figure><img src="${URL.createObjectURL(x.blob)}"><figcaption>${esc(x.name)}</figcaption></figure>`).join('')}</div>`;
+  if(legacy.length)h+=`<h3>チャート</h3><div class="gallery">${legacy.map(x=>`<figure><img src="${URL.createObjectURL(x.blob)}"><figcaption>${esc(x.name)}</figcaption></figure>`).join('')}</div>`;
+  let w=window.open('','_blank');if(!w)return;w.document.write(`<body style="background:#07101f;color:#fff;font-family:system-ui;max-width:720px;margin:auto;padding:16px">${h}</body>`);w.document.close()
+}"""
+if old_detail not in html:
+    raise RuntimeError("detail target not found")
+html = html.replace(old_detail, new_detail)
 
-function render(){
- let win=0,loss=0,profit=0,lossSum=0,total=0;
+# 9) Backup includes phase and restore preserves it.
+html = html.replace(
+"im.push({id:x.id,tradeId:x.tradeId,index:x.index,name:x.name,type:x.type,data:await dataURL(x.blob)})",
+"im.push({id:x.id,tradeId:x.tradeId,index:x.index,phase:x.phase||'before',name:x.name,type:x.type,data:await dataURL(x.blob)})"
+)
+html = html.replace(
+"s.put({id:x.id,tradeId:x.tradeId,index:x.index,name:x.name,type:x.type,blob:b})",
+"s.put({id:x.id,tradeId:x.tradeId,index:x.index,phase:x.phase||'before',name:x.name,type:x.type,blob:b})"
+)
 
- trades.forEach(t=>{
-  total+=t.pnl;
-  if(t.pnl>0){win++;profit+=t.pnl}
-  if(t.pnl<0){loss++;lossSum+=Math.abs(t.pnl)}
- });
+# 10) Update IndexedDB version so existing image records can coexist; no destructive migration.
+html = html.replace("indexedDB.open('FXDiaryImages',1)", "indexedDB.open('FXDiaryImages',2)")
 
- let pf=lossSum?(profit/lossSum).toFixed(2):"-";
+# Add migration note in the visible form hint.
+html = html.replace(
+"画像と記録はこの端末のブラウザ内に保存。機種変更・ブラウザ削除に備えて「バックアップ」を使用してください。",
+"画像は「エントリー前」「エントリー後」に分けてこの端末のブラウザ内へ保存。機種変更・ブラウザ削除に備えて「バックアップ」を使用してください。"
+)
 
- stats.innerHTML=`
- 総数:${trades.length}<br>
- 勝率:${(win/trades.length*100||0).toFixed(1)}%<br>
- PF:${pf}<br>
- P&L:${total}
- `;
-
- list.innerHTML=trades.map(t=>`
- <div class="panel">
- ${t.date} ${t.setup}<br>
- ${t.result} ${t.pnl}<br>
- Score:${(t.checkScore*100).toFixed(0)}%<br>
- <img src="${t.before}">
- <img src="${t.after}">
- </div>
- `).join("");
-}
-
-render();
-</script></body>
-</html>
+out = Path("/mnt/data/USDJPY_Trade_Diary_PRO_v2.html")
+out.write_text(html, encoding="utf-8")
+print(f"再生成しました: {out}")
+print(f"サイズ: {len(html):,} bytes")
